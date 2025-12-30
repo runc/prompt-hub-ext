@@ -1,9 +1,14 @@
 export type CollectMode = "posts" | "replies"
 
 export type CollectFilters = {
+  mode: CollectMode
+  username: string
   days: number
   keywordQuery: string
   maxItems: number
+  keepCollectTabOpen: boolean
+  usePopupWindow: boolean
+  autoFocusPopup: boolean
 }
 
 export type CollectProgress = {
@@ -24,4 +29,3 @@ export type CollectResult = {
   collectedAt: string
   items: CollectedTweet[]
 }
-

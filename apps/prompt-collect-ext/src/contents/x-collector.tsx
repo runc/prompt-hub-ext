@@ -15,6 +15,8 @@ export const config: PlasmoCSConfig = {
   matches: ["https://x.com/*", "https://twitter.com/*"],
 }
 
+type CollectMethod = "tab" | "window" | "current"
+
 type BgProgressMessage = {
   type: "COLLECT_PROGRESS"
   requestId: string
@@ -143,6 +145,7 @@ export const getStyle = () => {
   style.textContent = `
   :host{ all: initial; }
   .pc-root{ font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji"; color: #111827; }
+  .pc-root, .pc-root *{ box-sizing: border-box; }
   .pc-btn{ width: 44px; height: 44px; border-radius: 999px; background:#111827; color:#fff; border:1px solid rgba(255,255,255,.12); box-shadow:0 10px 30px rgba(0,0,0,.25); display:flex; align-items:center; justify-content:center; cursor:pointer; user-select:none; }
   .pc-btn:active{ transform: translateY(1px); }
   .pc-fab{ position: fixed; z-index: 2147483647; }
@@ -178,12 +181,22 @@ export default function XCollector() {
   const silentCollect = isSilentCollectMode()
   const [profile, setProfile] = useState(() => isProfilePath(location.pathname))
   const [panelOpen, setPanelOpen] = useState(false)
-  const [mode, setMode] = useStoredState<CollectMode>("pc_mode", "posts")
+  const [mode, setMode] = useState<CollectMode>(
+    "posts",
+  )
+  const [collectMethod, setCollectMethod] = useStoredState<CollectMethod>(
+    "pc_collectMethod",
+    "tab",
+  )
   const [days, setDays] = useStoredState<number>("pc_days", 7)
   const [keywordQuery, setKeywordQuery] = useStoredState<string>("pc_keywords", "")
   const [maxItems, setMaxItems] = useStoredState<number>("pc_maxItems", 200)
-  const [backgroundTab, setBackgroundTab] = useStoredState<boolean>(
-    "pc_backgroundTab",
+  const [keepCollectTabOpen, setKeepCollectTabOpen] = useStoredState<boolean>(
+    "pc_keepCollectTabOpen",
+    false,
+  )
+  const [autoFocusPopup, setAutoFocusPopup] = useStoredState<boolean>(
+    "pc_autoFocusPopup",
     true,
   )
 
@@ -192,6 +205,7 @@ export default function XCollector() {
   const [result, setResult] = useState<CollectResult | null>(null)
   const [error, setError] = useState<string | null>(null)
   const keepAlivePortRef = useRef<chrome.runtime.Port | null>(null)
+  const currentAbortRef = useRef<AbortController | null>(null)
 
   const draggingRef = useRef<{
     startX: number
@@ -217,7 +231,10 @@ export default function XCollector() {
 
   useEffect(() => {
     ensureLocationPatch()
-    const onChange = () => setProfile(isProfilePath(location.pathname))
+    const onChange = () => {
+      const nextProfile = isProfilePath(location.pathname)
+      setProfile(nextProfile)
+    }
     window.addEventListener("prompt-collect-locationchange", onChange)
     return () => window.removeEventListener("prompt-collect-locationchange", onChange)
   }, [])
@@ -356,15 +373,19 @@ export default function XCollector() {
   if (!profile) return null
 
   const filters: CollectFilters = {
+    mode,
+    username: profile.username,
     days: clamp(Number(days) || 0, 0, 365),
     keywordQuery,
     maxItems: clamp(Number(maxItems) || 1, 1, 2000),
+    keepCollectTabOpen: collectMethod === "current" ? false : keepCollectTabOpen,
+    usePopupWindow: collectMethod === "window",
+    autoFocusPopup: collectMethod === "current" ? false : autoFocusPopup,
   }
 
-  const targetUrl =
-    mode === "replies"
-      ? `${location.origin}/${profile.username}/with_replies`
-      : `${location.origin}/${profile.username}`
+  const targetUrl = `${location.origin}/${profile.username}`
+  const previewUrl =
+    mode === "replies" ? `${targetUrl}/with_replies` : targetUrl
 
   const busy = Boolean(progress)
 
@@ -375,49 +396,65 @@ export default function XCollector() {
     const newRequestId = `${Date.now()}-${Math.random().toString(16).slice(2)}`
     setRequestId(newRequestId)
 
-    if (backgroundTab) {
-      setProgress({ stage: "opening", collected: 0, scanned: 0 })
-      const port = chrome.runtime.connect({ name: `pc-collect:${newRequestId}` })
-      keepAlivePortRef.current = port
-      port.onDisconnect.addListener(() => {
-        if (keepAlivePortRef.current === port) keepAlivePortRef.current = null
-      })
-      await chrome.runtime.sendMessage({
-        type: "START_COLLECT",
-        requestId: newRequestId,
-        targetUrl,
-        filters,
-      })
+    if (collectMethod === "current") {
+      try {
+        currentAbortRef.current?.abort()
+      } catch {
+        // ignore
+      }
+      const controller = new AbortController()
+      currentAbortRef.current = controller
+      try {
+        setProgress({ stage: "collecting", collected: 0, scanned: 0 })
+        const res = await collectTweetsFromCurrentPage(filters, setProgress, {
+          signal: controller.signal,
+        })
+        setProgress(null)
+        setResult(res)
+        setError(null)
+      } catch (e) {
+        setProgress(null)
+        setError(e instanceof Error ? e.message : "Unknown error")
+      } finally {
+        if (currentAbortRef.current === controller) currentAbortRef.current = null
+      }
       return
     }
 
-    try {
-      setProgress({ stage: "collecting", collected: 0, scanned: 0 })
-      const res = await collectTweetsFromCurrentPage(filters, setProgress)
-      setProgress(null)
-      setResult(res)
-    } catch (e) {
-      setProgress(null)
-      setError(e instanceof Error ? e.message : "Unknown error")
-    }
+    setProgress({ stage: "opening", collected: 0, scanned: 0 })
+    const port = chrome.runtime.connect({ name: `pc-collect:${newRequestId}` })
+    keepAlivePortRef.current = port
+    port.onDisconnect.addListener(() => {
+      if (keepAlivePortRef.current === port) keepAlivePortRef.current = null
+    })
+    await chrome.runtime.sendMessage({
+      type: "START_COLLECT",
+      requestId: newRequestId,
+      targetUrl,
+      filters,
+    })
   }
 
   const cancelCollect = async () => {
     if (!requestId) return
     setProgress(null)
     setError("Canceled")
-    if (backgroundTab) {
-      const port = keepAlivePortRef.current
-      keepAlivePortRef.current = null
-      if (port) {
-        try {
-          port.disconnect()
-        } catch {
-          // ignore
-        }
-      }
-      await chrome.runtime.sendMessage({ type: "CANCEL_COLLECT", requestId })
+    const controller = currentAbortRef.current
+    currentAbortRef.current = null
+    if (controller) {
+      controller.abort()
+      return
     }
+    const port = keepAlivePortRef.current
+    keepAlivePortRef.current = null
+    if (port) {
+      try {
+        port.disconnect()
+      } catch {
+        // ignore
+      }
+    }
+    await chrome.runtime.sendMessage({ type: "CANCEL_COLLECT", requestId })
   }
 
   const copyMarkdown = async () => {
@@ -446,6 +483,7 @@ export default function XCollector() {
                 didDragRef.current = false
                 return
               }
+              setMode("posts")
               setPanelOpen(true)
             }}
           >
@@ -470,10 +508,10 @@ export default function XCollector() {
                 <div className="pc-label">内容类型</div>
                 <div className="pc-radio">
                   <div className="pc-chip" data-active={mode === "posts"} onClick={() => setMode("posts")}>
-                    推文
+                    推文 posts
                   </div>
                   <div className="pc-chip" data-active={mode === "replies"} onClick={() => setMode("replies")}>
-                    回复
+                    回复 replies
                   </div>
                 </div>
               </div>
@@ -515,17 +553,60 @@ export default function XCollector() {
                 />
               </div>
 
-              <label className="pc-row" style={{ gap: 8, cursor: "pointer" }}>
-                <input
-                  type="checkbox"
-                  checked={backgroundTab}
-                  onChange={(e) => setBackgroundTab(e.target.checked)}
-                />
-                <div className="pc-muted">在后台新标签页抓取（推荐）</div>
-              </label>
+              <div className="pc-col">
+                <div className="pc-label">抓取方式（默认新标签页）</div>
+                <div className="pc-radio">
+                  <div
+                    className="pc-chip"
+                    data-active={collectMethod === "tab"}
+                    onClick={() => setCollectMethod("tab")}
+                  >
+                    新标签页 tab
+                  </div>
+                  <div
+                    className="pc-chip"
+                    data-active={collectMethod === "window"}
+                    onClick={() => setCollectMethod("window")}
+                  >
+                    独立窗口 window（更稳）
+                  </div>
+                  <div
+                    className="pc-chip"
+                    data-active={collectMethod === "current"}
+                    onClick={() => setCollectMethod("current")}
+                  >
+                    当前页 current（会滚动页面）
+                  </div>
+                </div>
+              </div>
+
+              {collectMethod !== "current" && (
+                <div className="pc-col">
+                  <div className="pc-label">排查/高级</div>
+                  <label className="pc-row" style={{ gap: 8, cursor: "pointer" }}>
+                    <input
+                      type="checkbox"
+                      checked={keepCollectTabOpen}
+                      onChange={(e) => setKeepCollectTabOpen(e.target.checked)}
+                    />
+                    <div className="pc-muted">抓取完成后保留抓取页</div>
+                  </label>
+
+                  <label className="pc-row" style={{ gap: 8, cursor: "pointer" }}>
+                    <input
+                      type="checkbox"
+                      checked={autoFocusPopup}
+                      onChange={(e) => setAutoFocusPopup(e.target.checked)}
+                    />
+                    <div className="pc-muted">
+                      卡住时自动激活抓取页（tab 模式会短暂切换标签）
+                    </div>
+                  </label>
+                </div>
+              )}
 
               <div className="pc-muted">
-                目标页面: <a href={targetUrl} target="_blank" rel="noreferrer">{targetUrl}</a>
+                目标页面: <a href={previewUrl} target="_blank" rel="noreferrer">{previewUrl}</a>
               </div>
 
               {progress && (
