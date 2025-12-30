@@ -1,0 +1,41 @@
+{
+  "name": "@prompt-hub/core",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./db": {
+      "types": "./dist/db/index.d.ts",
+      "default": "./dist/db/index.js"
+    },
+    "./storage": {
+      "types": "./dist/storage/index.d.ts",
+      "default": "./dist/storage/index.js"
+    },
+    "./storage/chrome": {
+      "types": "./dist/storage/chrome.d.ts",
+      "default": "./dist/storage/chrome.js"
+    },
+    "./storage/web": {
+      "types": "./dist/storage/web.d.ts",
+      "default": "./dist/storage/web.js"
+    }
+  },
+  "scripts": {
+    "build": "tsup",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@plasmohq/storage": "^1.15.0",
+    "sql.js": "^1.13.0"
+  },
+  "devDependencies": {
+    "tsup": "^8.5.0",
+    "typescript": "~5.9.3"
+  }
+}
+

@@ -1,0 +1,55 @@
+{
+  "name": "@prompt-hub/extension",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "plasmo dev",
+    "build": "plasmo build",
+    "build:firefox": "plasmo build --target=firefox-mv2",
+    "dev:firefox": "plasmo dev --target=firefox-mv2",
+    "zip": "plasmo build && zip -r build/prompt-hub-ext.zip build/chrome-mv3-prod",
+    "typecheck": "tsc -p tsconfig.app.json --noEmit",
+    "lint": "eslint .",
+    "mock:db": "node scripts/make-mock-db.mjs",
+    "mock:serve": "node scripts/serve-mock-db.mjs"
+  },
+  "dependencies": {
+    "@prompt-hub/core": "workspace:*",
+    "@ai-sdk/openai": "^3.0.1",
+    "@plasmohq/storage": "^1.15.0",
+    "ai": "^6.0.3",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "sql.js": "^1.13.0",
+    "zustand": "^5.0.9"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.1",
+    "@types/chrome": "^0.0.326",
+    "@types/node": "^24.10.1",
+    "@types/react": "^19.2.5",
+    "@types/react-dom": "^19.2.3",
+    "@types/sql.js": "^1.4.9",
+    "@vitejs/plugin-react": "^5.1.1",
+    "autoprefixer": "^10.4.23",
+    "eslint": "^9.39.1",
+    "eslint-plugin-react-hooks": "^7.0.1",
+    "eslint-plugin-react-refresh": "^0.4.24",
+    "globals": "^16.5.0",
+    "plasmo": "^0.90.5",
+    "postcss": "^8.5.6",
+    "tailwindcss": "^3.4.17",
+    "typescript": "~5.9.3",
+    "typescript-eslint": "^8.46.4",
+    "vite": "^7.2.4"
+  },
+  "manifest": {
+    "name": "Prompt Hub",
+    "content_security_policy": {
+      "extension_pages": "script-src 'self' 'wasm-unsafe-eval' http://localhost; object-src 'self'"
+    },
+    "host_permissions": ["<all_urls>"],
+    "permissions": ["storage"]
+  }
+}

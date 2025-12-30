@@ -10,6 +10,7 @@ lerna-debug.log*
 # Dependencies
 node_modules
 .pnpm-store
+.yarn
 
 # Build output
 dist
@@ -17,22 +18,37 @@ dist-ssr
 build
 *.local
 *.zip
+*.crx
+*.pem
 
 # Plasmo specific
 .plasmo
 .parcel-cache
 
+# Vite
+.vite
+
 # Environment variables
 .env
 .env.local
 .env.*.local
+.env.development
+.env.production
 
 # TypeScript
 *.tsbuildinfo
+tsconfig.tsbuildinfo
 
 # Testing
 coverage
 *.lcov
+.nyc_output
+
+# Mock/Temp data
+mock/*.db
+mock/*.db-journal
+*.sqlite
+*.sqlite3
 
 # Editor directories and files
 .vscode/*
@@ -49,12 +65,25 @@ coverage
 *.sw?
 *~
 
-# OS specific
+# OS specific (macOS/Windows/Linux)
 Thumbs.db
 ehthumbs.db
 Desktop.ini
+.AppleDouble
+.LSOverride
+._*
+.Spotlight-V100
+.Trashes
 
 # Temporary files
 *.tmp
 *.temp
 .cache
+
+# Lock files (optional - 可根据团队需求调整)
+# package-lock.json
+# yarn.lock
+
+# Debug
+debug.log
+.trace

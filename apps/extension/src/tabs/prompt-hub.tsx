@@ -1,6 +1,11 @@
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 
-import { loadPromptsFromRemoteSqlite, type Prompt } from "~lib/prompt-db"
+import {
+  getPromptVariableInitialValues,
+  loadPromptsFromRemoteSqlite,
+  renderPromptTemplate,
+  type Prompt
+} from "~lib/prompt-db"
 import { STORAGE_KEYS, storage } from "~lib/storage"
 
 import "./prompt-hub.css"
@@ -42,6 +47,9 @@ export default function PromptHubTab() {
   const [keyword, setKeyword] = useState("")
   const [tagInput, setTagInput] = useState("")
   const [selectedTags, setSelectedTags] = useState<string[]>([])
+  const [activePrompt, setActivePrompt] = useState<Prompt | null>(null)
+  const [variableValues, setVariableValues] = useState<Record<string, string>>({})
+  const closeDialogButtonRef = useRef<HTMLButtonElement | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -78,7 +86,6 @@ export default function PromptHubTab() {
   useEffect(() => {
     if (!dbUrl.trim()) return
     void reload(dbUrl)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dbUrl])
 
   const normalizedKeyword = useMemo(() => normalizeText(keyword), [keyword])
@@ -130,6 +137,36 @@ export default function PromptHubTab() {
     await navigator.clipboard.writeText(text)
   }
 
+  useEffect(() => {
+    if (!activePrompt) return
+
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setActivePrompt(null)
+    }
+
+    const prevOverflow = document.body.style.overflow
+    document.body.style.overflow = "hidden"
+    window.addEventListener("keydown", onKeyDown)
+    closeDialogButtonRef.current?.focus()
+    return () => {
+      window.removeEventListener("keydown", onKeyDown)
+      document.body.style.overflow = prevOverflow
+    }
+  }, [activePrompt])
+
+  useEffect(() => {
+    if (!activePrompt) {
+      setVariableValues({})
+      return
+    }
+    setVariableValues(getPromptVariableInitialValues(activePrompt))
+  }, [activePrompt])
+
+  const renderedActiveContent = useMemo(() => {
+    if (!activePrompt) return ""
+    return renderPromptTemplate(activePrompt.content, variableValues)
+  }, [activePrompt, variableValues])
+
   const EmptyState = (
     <div className="max-w-2xl mx-auto mt-16 bg-white rounded-xl border border-gray-200 p-6">
       <h2 className="text-xl font-semibold">配置远程 SQLite 数据库</h2>
@@ -158,14 +195,185 @@ export default function PromptHubTab() {
         <div className="mt-4 text-sm text-red-600 whitespace-pre-wrap">{error}</div>
       ) : null}
       <p className="text-xs text-gray-500 mt-3">
-        表结构示例：prompts(id, title, content, category, tags(JSON字符串), created_at,
-        updated_at)
+        表结构示例：prompts(id, title, content(支持模板变量), category, tags(JSON字符串),
+        variables(JSON), images, videos, created_at, updated_at)
       </p>
     </div>
   )
 
   return (
     <div className="min-h-screen bg-gray-50">
+      {activePrompt ? (
+        <div
+          className="fixed inset-0 z-50 flex items-start justify-center p-4 sm:p-8"
+          role="dialog"
+          aria-modal="true"
+          aria-label="提示词详情"
+        >
+          <div
+            className="absolute inset-0 bg-black/40"
+            aria-hidden="true"
+            onClick={() => setActivePrompt(null)}
+          />
+
+          <div className="relative w-full max-w-3xl bg-white rounded-2xl shadow-xl border border-gray-200 overflow-hidden">
+            <div className="h-2" style={cardAccentStyle(activePrompt.id)} />
+            <div className="p-4 sm:p-6 max-h-[85vh] overflow-auto">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="text-lg font-semibold text-gray-900 break-words">
+                    {activePrompt.title}
+                  </div>
+                  <div className="text-xs text-gray-500 mt-1 flex flex-wrap gap-x-2 gap-y-1">
+                    {activePrompt.category ? (
+                      <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-gray-100 text-gray-700">
+                        {activePrompt.category}
+                      </span>
+                    ) : null}
+                    {activePrompt.updated_at ? (
+                      <span>更新：{formatDate(activePrompt.updated_at)}</span>
+                    ) : null}
+                    {activePrompt.created_at ? (
+                      <span>创建：{formatDate(activePrompt.created_at)}</span>
+                    ) : null}
+                    <span>ID：{activePrompt.id}</span>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => void copyPrompt(renderedActiveContent)}
+                    className="px-3 py-1.5 text-sm rounded-lg bg-gray-900 text-white hover:bg-black"
+                    title="复制提示词"
+                  >
+                    复制
+                  </button>
+                  <button
+                    type="button"
+                    className="px-3 py-1.5 text-sm rounded-lg border border-gray-300 hover:bg-gray-50"
+                    ref={closeDialogButtonRef}
+                    onClick={() => setActivePrompt(null)}
+                  >
+                    关闭
+                  </button>
+                </div>
+              </div>
+
+              {activePrompt.variablesList.length > 0 ? (
+                <div className="mt-4 rounded-xl border border-gray-200 bg-gray-50 p-3 sm:p-4">
+                  <div className="text-sm font-medium text-gray-900">变量替换</div>
+                  <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    {activePrompt.variablesList.map((v) => (
+                      <label key={v.name} className="block">
+                        <div className="text-xs text-gray-600">
+                          {v.label ? v.label : v.name}
+                        </div>
+                        <input
+                          value={variableValues[v.name] ?? ""}
+                          onChange={(e) =>
+                            setVariableValues((prev) => ({
+                              ...prev,
+                              [v.name]: e.target.value
+                            }))
+                          }
+                          placeholder={v.defaultValue ?? ""}
+                          className="mt-1 w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        />
+                      </label>
+                    ))}
+                  </div>
+                  <div className="mt-3 flex items-center justify-between gap-2">
+                    <div className="text-xs text-gray-500">
+                      支持{" "}
+                      <code className="font-mono text-gray-700">{"{变量}"}</code> /{" "}
+                      <code className="font-mono text-gray-700">{"{{变量}}"}</code>{" "}
+                      占位符
+                    </div>
+                    <button
+                      type="button"
+                      className="px-2 py-1 text-xs rounded-lg border border-gray-300 hover:bg-white"
+                      onClick={() =>
+                        setVariableValues(getPromptVariableInitialValues(activePrompt))
+                      }
+                    >
+                      重置
+                    </button>
+                  </div>
+                </div>
+              ) : null}
+
+              {activePrompt.tagsList.length > 0 ? (
+                <div className="mt-4 flex flex-wrap gap-2">
+                  {activePrompt.tagsList.map((t) => (
+                    <button
+                      key={t}
+                      type="button"
+                      onClick={() => toggleTag(t)}
+                      className="px-2 py-0.5 text-xs rounded-full bg-blue-50 text-blue-700 hover:bg-blue-100"
+                      title="点击筛选该标签"
+                    >
+                      {t}
+                    </button>
+                  ))}
+                </div>
+              ) : null}
+
+              <div className="mt-4 text-sm text-gray-800 whitespace-pre-wrap leading-relaxed">
+                {renderedActiveContent}
+              </div>
+
+              <details className="mt-4">
+                <summary className="cursor-pointer text-sm text-gray-600 hover:text-gray-900">
+                  查看模板原文
+                </summary>
+                <div className="mt-2 text-sm text-gray-700 whitespace-pre-wrap">
+                  {activePrompt.content}
+                </div>
+              </details>
+
+              {activePrompt.imagesList.length > 0 ? (
+                <div className="mt-6">
+                  <div className="text-sm font-medium text-gray-900">图片</div>
+                  <div className="mt-2 flex flex-col gap-2">
+                    {activePrompt.imagesList.map((url) => (
+                      <a
+                        key={url}
+                        href={url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-sm text-blue-700 hover:underline break-all"
+                      >
+                        {url}
+                      </a>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+
+              {activePrompt.videosList.length > 0 ? (
+                <div className="mt-6">
+                  <div className="text-sm font-medium text-gray-900">视频</div>
+                  <div className="mt-2 flex flex-col gap-2">
+                    {activePrompt.videosList.map((url) => (
+                      <a
+                        key={url}
+                        href={url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-sm text-blue-700 hover:underline break-all"
+                      >
+                        {url}
+                      </a>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+            </div>
+          </div>
+        </div>
+      ) : null}
+
       <div className="sticky top-0 z-10 bg-white/80 backdrop-blur border-b border-gray-200">
         <div className="max-w-7xl mx-auto px-4 py-3 flex flex-col gap-3">
           <div className="flex items-center gap-3">
@@ -261,7 +469,17 @@ export default function PromptHubTab() {
               {filteredPrompts.map((p) => (
                 <div
                   key={p.id}
-                  className="ph-masonry-item mb-4 bg-white rounded-xl border border-gray-200 overflow-hidden shadow-sm"
+                  className="ph-masonry-item mb-4 bg-white rounded-xl border border-gray-200 overflow-hidden shadow-sm cursor-pointer hover:shadow-md transition-shadow focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+                  role="button"
+                  tabIndex={0}
+                  aria-label={`查看详情：${p.title}`}
+                  onClick={() => setActivePrompt(p)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault()
+                      setActivePrompt(p)
+                    }
+                  }}
                 >
                   <div className="h-2" style={cardAccentStyle(p.id)} />
                   <div className="p-4">
@@ -282,7 +500,11 @@ export default function PromptHubTab() {
                         </div>
                       </div>
                       <button
-                        onClick={() => void copyPrompt(p.content)}
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          void copyPrompt(p.content)
+                        }}
                         className="shrink-0 px-3 py-1.5 text-sm rounded-lg bg-gray-900 text-white hover:bg-black"
                         title="复制提示词"
                       >
@@ -299,7 +521,11 @@ export default function PromptHubTab() {
                         {p.tagsList.slice(0, 12).map((t) => (
                           <button
                             key={t}
-                            onClick={() => toggleTag(t)}
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              toggleTag(t)
+                            }}
                             className="px-2 py-0.5 text-xs rounded-full bg-blue-50 text-blue-700 hover:bg-blue-100"
                             title="点击筛选该标签"
                           >
@@ -308,6 +534,8 @@ export default function PromptHubTab() {
                         ))}
                       </div>
                     ) : null}
+
+                    <div className="mt-3 text-xs text-gray-400">点击卡片查看详情</div>
                   </div>
                 </div>
               ))}
@@ -318,4 +546,3 @@ export default function PromptHubTab() {
     </div>
   )
 }
-

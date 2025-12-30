@@ -73,7 +73,9 @@ export default function OptionsPage() {
             <ul className="list-disc list-inside space-y-1">
               <li>URL 需要能直接下载 `.sqlite/.db` 文件</li>
               <li>服务端需允许跨域访问（或扩展已获得 host 权限）</li>
-              <li>表名 `prompts`，字段包含 `title`、`content`，可选 `category`、`tags`</li>
+              <li>
+                表名 `prompts`，字段包含 `title`、`content`，可选 `category`、`tags`、`images`、`videos`
+              </li>
             </ul>
           </div>
         </div>
@@ -81,4 +83,3 @@ export default function OptionsPage() {
     </div>
   )
 }
-
