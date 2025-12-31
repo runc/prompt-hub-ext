@@ -4,6 +4,7 @@ import type {
   CollectResult,
   CollectedTweet,
 } from "./types"
+import { getCapturedTweetText } from "./fulltext"
 
 function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms))
@@ -36,6 +37,14 @@ function getTweetIdFromHref(href: string): string | null {
   } catch {
     return getTweetIdFromUrl(href)
   }
+}
+
+function getTweetIdFromArticle(article: Element): string | null {
+  const href = (article.querySelector('a[href*="/status/"]') as HTMLAnchorElement | null)?.getAttribute(
+    "href",
+  )
+  if (!href) return null
+  return getTweetIdFromHref(href)
 }
 
 function hasNewUnseenTweet(seen: Set<string>): boolean {
@@ -239,6 +248,11 @@ function extractTweetFromArticleDetailed(
     text = langDivs.sort((a, b) => b.length - a.length)[0] ?? ""
   }
 
+  const captured = getCapturedTweetText(id)
+  if (captured && (!text || captured.length > text.length)) {
+    text = captured
+  }
+
   return { tweet: { id, url, createdAt, text }, reason: "ok" }
 }
 
@@ -408,8 +422,11 @@ export async function collectTweetsFromCurrentPage(
     for (const article of articles) {
       throwIfAborted(signal)
 
-      // Try to expand "Show more" if present
-      await expandTweet(article, signal)
+      // If we already captured full text from network responses, avoid clicking "Show more".
+      const maybeId = getTweetIdFromArticle(article)
+      if (!maybeId || !getCapturedTweetText(maybeId)) {
+        await expandTweet(article, signal)
+      }
 
       debugCounters.seenArticles++
       const detail = extractTweetFromArticleDetailed(

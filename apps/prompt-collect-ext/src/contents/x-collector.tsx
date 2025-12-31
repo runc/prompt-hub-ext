@@ -4,6 +4,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react"
 import {
   collectTweetsFromCurrentPage,
 } from "~lib/x/scrape"
+import { installXFullTextCaptureListener } from "~lib/x/fulltext"
 import type {
   CollectFilters,
   CollectMode,
@@ -13,6 +14,7 @@ import type {
 
 export const config: PlasmoCSConfig = {
   matches: ["https://x.com/*", "https://twitter.com/*"],
+  run_at: "document_start",
 }
 
 type CollectMethod = "tab" | "window" | "current"
@@ -139,6 +141,9 @@ function useStoredState<T>(key: string, initial: T) {
 
   return [value, setValue] as const
 }
+
+// Install early so we don't miss the initial timeline GraphQL responses.
+installXFullTextCaptureListener()
 
 export const getStyle = () => {
   const style = document.createElement("style")
