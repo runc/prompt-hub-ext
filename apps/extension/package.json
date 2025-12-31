@@ -47,7 +47,7 @@
   "manifest": {
     "name": "Prompt Hub",
     "content_security_policy": {
-      "extension_pages": "script-src 'self' 'wasm-unsafe-eval' http://localhost; object-src 'self'"
+      "extension_pages": "script-src 'self' 'wasm-unsafe-eval' http://localhost; object-src 'self'; img-src 'self' data: https: http:"
     },
     "host_permissions": ["<all_urls>"],
     "permissions": ["storage"]
