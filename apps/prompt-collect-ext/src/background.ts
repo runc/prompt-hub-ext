@@ -34,6 +34,15 @@ type CollectFailedMessage = {
   error: string
 }
 
+type AiOrganizeMessage = {
+  type: "AI_ORGANIZE"
+  text: string
+}
+
+type AiOrganizeResponse =
+  | { ok: true; content: string }
+  | { ok: false; error: string }
+
 type CollectFilters = {
   mode: "posts" | "replies"
   username: string
@@ -83,6 +92,120 @@ const inflight = new Map<
 const keepAlivePorts = new Map<string, chrome.runtime.Port>()
 
 const WATCHDOG_PREFIX = "pc-watchdog:"
+
+const MODELSCOPE_QWEN_DEFAULT_BASE_URL = "https://api-inference.modelscope.cn/v1"
+const MODELSCOPE_QWEN_DEFAULT_MODEL = "qwen-plus"
+
+const AI_STORAGE_KEYS = {
+  modelscopeBaseUrl: "promptCollect.ai.modelscope.baseUrl",
+  modelscopeApiKey: "promptCollect.ai.modelscope.apiKey",
+  modelscopeModel: "promptCollect.ai.modelscope.model",
+} as const
+
+const ORGANIZE_PROMPT_SYSTEM = `你是一个“提示词整理助手”。把用户粘贴的一段混合文本整理成一个 Prompt。
+要求：
+1) 只输出 JSON（不要 Markdown，不要解释）。
+2) JSON 字段：title, category, tags, images, videos, content, author, date。
+3) tags/images/videos 必须是数组；无则输出 []。
+4) category 智能识别归类：
+   - "图片"：提示词用于图片生成、图像处理、绘画、设计等场景（如 Midjourney、DALL-E、Stable Diffusion 等）
+   - "视频"：提示词用于视频生成、视频编辑、动画制作等场景（如 Runway、Pika 等）
+   - "文本"：提示词用于文本生成、写作、对话、翻译、分析等文本处理场景
+   - 如果无法明确判断或不属于以上类别，可为空字符串
+5) tags 最多 4 个，选择最核心的关键词标签；如果有作者信息，必须将作者作为其中一个标签。
+6) 如果文本中明确提到作者或时间信息，务必提取到 author 和 date 字段；author 可以是人名或组织名；date 格式为 YYYY-MM-DD 或 YYYY-MM，无则为空字符串。
+7) images/videos 只收录文本中出现的链接，不要编造；把图片/视频链接从正文中移到 images/videos（正文可保留必要上下文）。
+8) title 尽量简短；content 为最终可直接使用的提示词正文。`
+
+function normalizeOpenAICompatBaseUrl(input: string): string {
+  let url = String(input ?? "").trim()
+  if (!url) return ""
+  url = url.replace(/\/+$/g, "")
+  if (url.endsWith("/chat/completions")) url = url.slice(0, -"/chat/completions".length)
+  if (url.endsWith("/responses")) url = url.slice(0, -"/responses".length)
+  url = url.replace(/\/+$/g, "")
+  return url
+}
+
+function extractJsonObject(text: string): unknown {
+  const start = text.indexOf("{")
+  const end = text.lastIndexOf("}")
+  if (start < 0 || end < 0 || end <= start) return null
+  const slice = text.slice(start, end + 1)
+  try {
+    return JSON.parse(slice)
+  } catch {
+    return null
+  }
+}
+
+function normalizeOrganizeContent(input: unknown): string {
+  const obj =
+    input && typeof input === "object" ? (input as Record<string, unknown>) : ({} as Record<string, unknown>)
+  const content = typeof obj.content === "string" ? obj.content.trim() : ""
+  return content
+}
+
+async function loadAiSettings(): Promise<{ baseUrl: string; apiKey: string; model: string }> {
+  const raw = await chrome.storage.local.get([
+    AI_STORAGE_KEYS.modelscopeBaseUrl,
+    AI_STORAGE_KEYS.modelscopeApiKey,
+    AI_STORAGE_KEYS.modelscopeModel,
+  ])
+  const baseUrl =
+    typeof raw[AI_STORAGE_KEYS.modelscopeBaseUrl] === "string"
+      ? raw[AI_STORAGE_KEYS.modelscopeBaseUrl]
+      : MODELSCOPE_QWEN_DEFAULT_BASE_URL
+  const apiKey =
+    typeof raw[AI_STORAGE_KEYS.modelscopeApiKey] === "string"
+      ? raw[AI_STORAGE_KEYS.modelscopeApiKey]
+      : ""
+  const model =
+    typeof raw[AI_STORAGE_KEYS.modelscopeModel] === "string"
+      ? raw[AI_STORAGE_KEYS.modelscopeModel]
+      : MODELSCOPE_QWEN_DEFAULT_MODEL
+
+  return { baseUrl, apiKey, model }
+}
+
+async function organizeWithOpenAICompat(text: string): Promise<string> {
+  const settings = await loadAiSettings()
+  if (!settings.apiKey.trim()) throw new Error("未配置 API Key（Prompt Collect AI）")
+
+  const baseURL = normalizeOpenAICompatBaseUrl(settings.baseUrl)
+  if (!baseURL) throw new Error("未配置 Base URL（Prompt Collect AI）")
+  if (!settings.model.trim()) throw new Error("未配置模型名称（Prompt Collect AI）")
+
+  const res = await fetch(`${baseURL}/chat/completions`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      authorization: `Bearer ${settings.apiKey.trim()}`,
+    },
+    body: JSON.stringify({
+      model: settings.model.trim(),
+      temperature: 0.2,
+      messages: [
+        { role: "system", content: ORGANIZE_PROMPT_SYSTEM },
+        { role: "user", content: `请整理以下 X post 原文：\n\n${text}` },
+      ],
+    }),
+  })
+
+  if (!res.ok) {
+    const body = await res.text().catch(() => "")
+    throw new Error(`AI 请求失败：HTTP ${res.status}${body ? `\n${body.slice(0, 500)}` : ""}`)
+  }
+
+  const json = (await res.json().catch(() => null)) as any
+  const outputText = String(json?.choices?.[0]?.message?.content ?? "").trim()
+  if (!outputText) throw new Error("AI 返回为空")
+
+  const parsed = extractJsonObject(outputText)
+  const content = normalizeOrganizeContent(parsed)
+  if (!content) throw new Error("AI 整理失败：未得到可用 content")
+  return content
+}
 
 function withCollectHash(url: string): string {
   try {
@@ -233,7 +356,7 @@ async function sendMessageWithRetry<TMessage>(
   }
 }
 
-chrome.runtime.onMessage.addListener((message: unknown, sender) => {
+chrome.runtime.onMessage.addListener((message: unknown, sender, sendResponse) => {
   if (!message || typeof message !== "object") return
 
   const typed = message as
@@ -242,6 +365,22 @@ chrome.runtime.onMessage.addListener((message: unknown, sender) => {
     | CollectProgressMessage
     | CollectFinishedMessage
     | CollectFailedMessage
+    | AiOrganizeMessage
+
+  if (typed.type === "AI_ORGANIZE") {
+    void (async () => {
+      try {
+        const content = await organizeWithOpenAICompat(String(typed.text ?? ""))
+        sendResponse({ ok: true, content } satisfies AiOrganizeResponse)
+      } catch (e) {
+        sendResponse({
+          ok: false,
+          error: e instanceof Error ? e.message : String(e),
+        } satisfies AiOrganizeResponse)
+      }
+    })()
+    return true
+  }
 
   if (typed.type === "START_COLLECT") {
     const sourceTabId = sender.tab?.id

@@ -125,7 +125,7 @@ function patchXHR(): void {
       this,
       method,
       resolvedUrl,
-      async,
+      async ?? true,
       username ?? undefined,
       password ?? undefined,
     )
@@ -133,7 +133,7 @@ function patchXHR(): void {
 
   XMLHttpRequest.prototype.send = function (
     this: XMLHttpRequest & { __pc_url?: string },
-    body?: Document | BodyInit | null,
+    body?: Document | XMLHttpRequestBodyInit | null,
   ) {
     this.addEventListener(
       "loadend",

@@ -32,7 +32,7 @@
   "manifest": {
     "name": "Prompt Collect",
     "description": "Collect X (Twitter) profile posts/replies with filters.",
-    "host_permissions": ["https://x.com/*", "https://twitter.com/*"],
+    "host_permissions": ["<all_urls>"],
     "permissions": ["storage", "tabs", "windows", "alarms"]
   }
 }
