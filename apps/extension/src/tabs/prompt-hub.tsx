@@ -105,6 +105,77 @@ export default function PromptHubTab() {
   const [editorAiError, setEditorAiError] = useState("")
 
   useEffect(() => {
+    const PENDING_PASTE_KEY = "promptHub.pendingPasteText" as const
+    let cancelled = false
+    let consumeQueued = false
+
+    const consumePendingPaste = async () => {
+      try {
+        if (document.visibilityState !== "visible" || !document.hasFocus()) return
+        const raw = await new Promise<Record<string, unknown>>((resolve, reject) => {
+          chrome.storage.local.get(PENDING_PASTE_KEY, (items) => {
+            const err = chrome.runtime.lastError
+            if (err) reject(new Error(err.message))
+            else resolve(items as Record<string, unknown>)
+          })
+        })
+        const text = typeof raw[PENDING_PASTE_KEY] === "string" ? (raw[PENDING_PASTE_KEY] as string) : ""
+        if (!text.trim()) return
+        await new Promise<void>((resolve, reject) => {
+          chrome.storage.local.remove(PENDING_PASTE_KEY, () => {
+            const err = chrome.runtime.lastError
+            if (err) reject(new Error(err.message))
+            else resolve()
+          })
+        })
+        if (cancelled) return
+        openCreatePrompt()
+        setEditorPasteText(text)
+      } catch {
+        // ignore
+      }
+    }
+
+    const queueConsume = () => {
+      if (consumeQueued) return
+      consumeQueued = true
+      queueMicrotask(() => {
+        consumeQueued = false
+        void consumePendingPaste()
+      })
+    }
+
+    queueConsume()
+
+    const onMessage = (message: unknown) => {
+      const typed = message as { type?: unknown }
+      if (typed?.type === "promptHub.pendingPasteReady") {
+        queueConsume()
+      }
+    }
+
+    try {
+      chrome.runtime.onMessage.addListener(onMessage as any)
+    } catch {
+      // ignore
+    }
+
+    window.addEventListener("focus", queueConsume, true)
+    document.addEventListener("visibilitychange", queueConsume, true)
+
+    return () => {
+      cancelled = true
+      window.removeEventListener("focus", queueConsume, true)
+      document.removeEventListener("visibilitychange", queueConsume, true)
+      try {
+        chrome.runtime.onMessage.removeListener(onMessage as any)
+      } catch {
+        // ignore
+      }
+    }
+  }, [])
+
+  useEffect(() => {
     let cancelled = false
     ;(async () => {
       const savedUrl = (await storage.get(STORAGE_KEYS.dbUrl)) as string | undefined
@@ -379,7 +450,7 @@ export default function PromptHubTab() {
             organized.images.length > 0 ? organized.images.join("\n") : prev.imagesText,
           videosText:
             organized.videos.length > 0 ? organized.videos.join("\n") : prev.videosText,
-          content: organized.content || prev.content
+          content: organized.content || prev.content || pasted
         }
       })
     } catch (e) {

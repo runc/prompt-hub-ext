@@ -11,7 +11,12 @@ export const ORGANIZE_PROMPT_SYSTEM = `你是一个“提示词整理助手”�
 5) tags 最多 4 个，选择最核心的关键词标签；如果有作者信息，必须将作者作为其中一个标签。
 6) 如果文本中明确提到作者或时间信息，务必提取到 author 和 date 字段；author 可以是人名或组织名；date 格式为 YYYY-MM-DD 或 YYYY-MM，无则为空字符串。
 7) images/videos 只收录文本中出现的链接，不要编造；把图片/视频链接从正文中移到 images/videos（正文可保留必要上下文）。
-8) title 尽量简短；content 为最终可直接使用的提示词正文。`
+8) title 尽量简短；content 为最终可直接使用的提示词正文。
+9) content 提炼要求：
+   - 提取核心提示词内容，去除无关的元信息（如来源说明、作者介绍、推广信息等）
+   - 如果原文是类 JSON 格式（如包含 { }, [ ], "key": "value" 等结构），必须保留其格式结构
+   - 如果原文包含代码块、特殊标记或格式化内容，保持原有格式
+   - 确保输出的 content 可以直接作为提示词使用，无需二次处理`
 
 export function buildOrganizePromptUser(text: string) {
   return `请整理以下粘贴文本：\n\n${text}`

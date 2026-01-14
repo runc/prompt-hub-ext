@@ -103,7 +103,16 @@ function normalizeResult(input: unknown): OrganizeResult {
 
   const title = typeof obj?.title === "string" ? obj.title.trim() : ""
   const category = typeof obj?.category === "string" ? obj.category.trim() : ""
-  const content = typeof obj?.content === "string" ? obj.content.trim() : ""
+  const content =
+    typeof obj?.content === "string"
+      ? obj.content.trim()
+      : typeof obj?.prompt === "string"
+        ? obj.prompt.trim()
+        : typeof obj?.text === "string"
+          ? obj.text.trim()
+          : typeof obj?.body === "string"
+            ? obj.body.trim()
+            : ""
   const tags = normalizeStringArray(obj?.tags)
   const images = normalizeLinks(obj?.images)
   const videos = normalizeLinks(obj?.videos)
